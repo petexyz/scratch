@@ -1,6 +1,9 @@
 import random
 import sys
 import math
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import norm
 from collections import Counter
 from datetime import datetime
 
@@ -9,71 +12,78 @@ class DicePoolSimulator:
         self.sides = sides
         self.num_dice = num_dice
         self.counts = Counter()
-        self.start_time = None
-        self.end_time = None
-
-    def roll_generator(self, iterations):
-        for _ in range(iterations):
-            yield sum(random.randint(1, self.sides) for _ in range(self.num_dice))
-
-    def calculate_stats(self, total_rolls):
-        if total_rolls == 0: return 0, 0, 0
-        mean = sum(val * count for val, count in self.counts.items()) / total_rolls
-        variance = sum(count * (val - mean)**2 for val, count in self.counts.items()) / total_rolls
-        std_dev = math.sqrt(variance)
-        return mean, variance, std_dev
-
-    def get_distribution_label(self):
-        if self.num_dice == 1:
-            return "UNIFORM (All outcomes equally likely)"
-        elif self.num_dice == 2:
-            return "TRIANGULAR (Sum of two independent variables)"
-        else:
-            return "NORMAL / GAUSSIAN (Central Limit Theorem in effect)"
-
-    def print_ascii_graph(self, iterations, max_width=50):
-        if not self.counts: return
-        print(f"\nDISTRIBUTION TYPE: {self.get_distribution_label()}")
-        print("-" * 65)
-        
-        max_freq = max(self.counts.values())
-        for s in range(self.num_dice, (self.num_dice * self.sides) + 1):
-            count = self.counts[s]
-            bar_length = int((count / max_freq) * max_width) if max_freq > 0 else 0
-            print(f"{s:>4} | {'█' * bar_length} {count}")
-        print("-" * 65)
+        self.results_list = [] # Needed for smooth plotting
 
     def run(self, iterations):
-        self.start_time = datetime.now()
-        try:
-            for total_sum in self.roll_generator(iterations):
-                self.counts[total_sum] += 1
-            self.end_time = datetime.now()
-            
-            actual_rolls = sum(self.counts.values())
-            m, v, sd = self.calculate_stats(actual_rolls)
-            
-            # Header
-            print(f"\n{'='*65}\nSCENARIO: {self.num_dice}d{self.sides} | {actual_rolls:,} ROLLS\n{'='*65}")
-            print(f"Start: {self.start_time.strftime('%H:%M:%S.%f')}")
-            print(f"End:   {self.end_time.strftime('%H:%M:%S.%f')}")
-            print(f"Dur:   {self.end_time - self.start_time}\n{'-'*65}")
-            
-            # Table
-            print(f"{'Sum':<8} | {'Occurrences':<15} | {'Percentage'}")
-            for s in range(self.num_dice, (self.num_dice * self.sides) + 1):
-                c = self.counts[s]
-                print(f"{s:<8} | {c:<15} | {(c/actual_rolls)*100:>10.2f}%")
-            
-            print(f"{'-'*65}\nSTATS: Mean: {m:.2f} | Var: {v:.2f} | StdDev: {sd:.2f}")
-            self.print_ascii_graph(actual_rolls)
+        start_time = datetime.now()
+        # Using a list here to feed the graphing engine efficiently
+        self.results_list = [
+            sum(random.randint(1, self.sides) for _ in range(self.num_dice))
+            for _ in range(iterations)
+        ]
+        self.counts = Counter(self.results_list)
+        end_time = datetime.now()
+        
+        self.display_stats(iterations, end_time - start_time)
+        self.plot_distribution()
 
-        except KeyboardInterrupt:
-            print("\nExiting.")
+    def calculate_z_score(self, value, mean, std_dev):
+        return (value - mean) / std_dev if std_dev > 0 else 0
+
+    def display_stats(self, total, duration):
+        mean = np.mean(self.results_list)
+        std_dev = np.std(self.results_list)
+        variance = np.var(self.results_list)
+        median = np.median(self.results_list)
+        mode = self.counts.most_common(1)[0][0]
+
+        print(f"\n{'='*60}")
+        print(f"SCENARIO: {self.num_dice}d{self.sides} | {total:,} ROLLS")
+        print(f"{'='*60}")
+        print(f"Duration: {duration}")
+        print(f"Mean:     {mean:.2f}")
+        print(f"Median:   {median:.1f}")
+        print(f"Mode:     {mode}")
+        print(f"Std Dev:  {std_dev:.4f}")
+        print(f"Variance: {variance:.4f}")
+        
+        # Example Z-Score for the Max Roll
+        max_roll = self.num_dice * self.sides
+        z = self.calculate_z_score(max_roll, mean, std_dev)
+        print(f"Z-Score (Max Roll {max_roll}): {z:.2f}")
+        print(f"{'='*60}")
+
+    def plot_distribution(self):
+        data = self.results_list
+        mu, std = norm.fit(data)
+
+        # Create the plot
+        plt.figure(figsize=(10, 6))
+        
+        # 1. Histogram (The actual data)
+        # bins are set to align with integer dice sums
+        bins = np.arange(self.num_dice - 0.5, (self.num_dice * self.sides) + 1.5, 1)
+        plt.hist(data, bins=bins, density=True, alpha=0.6, color='skyblue', edgecolor='black', label='Actual Rolls')
+
+        # 2. The Smooth Bell Curve (The theoretical Normal Distribution)
+        xmin, xmax = plt.xlim()
+        x = np.linspace(xmin, xmax, 100)
+        p = norm.pdf(x, mu, std)
+        plt.plot(x, p, 'r', linewidth=2, label=f'Normal Curve (μ={mu:.2f}, σ={std:.2f})')
+
+        # Formatting
+        title = f"Distribution of {self.num_dice}d{self.sides} ({len(data):,} rolls)"
+        plt.title(title, fontsize=14)
+        plt.xlabel('Sum of Dice')
+        plt.ylabel('Probability Density')
+        plt.legend()
+        plt.grid(axis='y', alpha=0.3)
+        
+        print("Rendering graph... (Close window to exit)")
+        plt.show()
 
 def main():
     try:
-        # CLI Args: S N R
         if len(sys.argv) >= 4:
             s, n, r = map(int, sys.argv[1:4])
         else:
@@ -81,9 +91,10 @@ def main():
             n = int(input("Dice (N): "))
             r = int(input("Rolls (R): "))
         
-        DicePoolSimulator(s, n).run(r)
-    except (ValueError, EOFError):
-        print("\nInvalid input. Use integers.")
+        sim = DicePoolSimulator(s, n)
+        sim.run(r)
+    except (ValueError, KeyboardInterrupt):
+        print("\nExiting.")
 
 if __name__ == "__main__":
     main()
